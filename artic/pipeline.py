@@ -101,6 +101,7 @@ def init_pipeline_parser():
     parser_minion.add_argument('--no-longshot', dest='no_longshot', action='store_true', help='Do not use Longshot for variant filtering after medaka')
     parser_minion.add_argument('--minimap2', dest='minimap2', default=True,
                                action='store_true', help='Use minimap2 (default)')
+    parser_minion.add_argument('--divergent', action='store_true', help='Generate a pseudo-reference using a naive pileup for highly divergent sequences so that nanopolish/medaka can finish')
     parser_minion.add_argument(
         '--bwa', dest='bwa', action='store_true', help='Use bwa instead of minimap2')
     parser_minion.add_argument('--normalise', dest='normalise', type=int,
