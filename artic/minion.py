@@ -198,6 +198,13 @@ def run(parser, args):
     cmds.append("samtools index %s.trimmed.rg.sorted.bam" % (args.sample))
     cmds.append("samtools index %s.primertrimmed.rg.sorted.bam" % (args.sample))
 
+    # 4.5) For viruses highly divergent from the reference do a naive pileup to generate a far less divergent "reference" for the variant calling/polishing steps 
+    if args.divergent:
+        cmds.append("bcftools mpileup --max-depth 2000000 --skip-indels -Ou -f %s %s.primertrimmed.rg.sorted.bam | bcftools call -mv -Ob -o %s.naive_reference.vcf.gz" % (ref, args.sample, args.sample))
+        cmds.append("bcftools index %s.naive_reference.vcf.gz" % (args.sample))
+        cmds.append("bcftools consensus -f %s %s.naive_reference.vcf.gz > %s.naive_pileup.consensus.fasta" % (ref, args.sample, args.sample))
+        ref = "%s.naive_pileup.consensus.fasta" % (args.sample)    
+
     # 6) do variant calling on each read group, either using the medaka or nanopolish workflow
     if args.medaka:
         for p in pools:
@@ -269,9 +276,9 @@ def run(parser, args):
     # 11) apply the header to the consensus sequence and run alignment against the reference sequence
     fasta_header = "%s/ARTIC/%s" % (args.sample, method)
     cmds.append("artic_fasta_header %s.consensus.fasta \"%s\"" % (args.sample, fasta_header))
-    cmds.append("cat %s.consensus.fasta %s > %s.muscle.in.fasta" % (args.sample, ref, args.sample))
-    cmds.append("muscle -in %s.muscle.in.fasta -out %s.muscle.out.fasta" % (args.sample, args.sample))
-
+    cmds.append("cat %s.consensus.fasta %s > %s.mafft.in.fasta" % (args.sample, ref, args.sample))
+    cmds.append("mafft --auto --preservecase --thread -1 %s.mafft.in.fasta > %s.mafft.out.fasta" % (args.sample, args.sample))
+    
     # 12) get some QC stats
     if args.strict:
         cmds.append("artic_get_stats --scheme {} --align-report {}.alignreport.txt --vcf-report {}.vcfreport.txt {}" .format(bed, args.sample, args.sample, args.sample))
