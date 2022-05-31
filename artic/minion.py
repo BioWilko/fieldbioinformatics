@@ -200,7 +200,7 @@ def run(parser, args):
 
     # 4.5) For viruses highly divergent from the reference do a naive pileup to generate a far less divergent "reference" for the variant calling/polishing steps 
     if args.divergent:
-        cmds.append("bcftools mpileup --max-depth 200000 -Ou -f %s %s.primertrimmed.rg.sorted.bam | bcftools call -mv -Ob -o %s.naive_reference.vcf.gz" % (ref, args.sample, args.sample))
+        cmds.append("bcftools mpileup --max-depth 200000 --skip-indels -Ou -f %s %s.primertrimmed.rg.sorted.bam | bcftools call -mv -Ob -o %s.naive_reference.vcf.gz" % (ref, args.sample, args.sample))
         cmds.append("bcftools index %s.naive_reference.vcf.gz" % (args.sample))
         cmds.append("bcftools consensus -f %s %s.naive_reference.vcf.gz > %s.naive_pileup.consensus.fasta" % (ref, args.sample, args.sample))
         ref = "%s.naive_pileup.consensus.fasta" % (args.sample)    
