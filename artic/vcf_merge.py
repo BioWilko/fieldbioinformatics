@@ -37,6 +37,8 @@ def vcf_merge(args):
    variants.sort(key=attrgetter('CHROM', 'POS'))
 
    for v in variants:
+      if v.QUAL == 0.0:
+            continue
       if v.POS in primer_map[v.INFO['Pool']]:
          vcf_writer_primers.write_record(v)
          print("found primer binding site mismatch: %s" % (primer_map[v.INFO['Pool']][v.POS]), file=sys.stderr)

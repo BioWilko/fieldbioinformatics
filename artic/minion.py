@@ -170,7 +170,7 @@ def run(parser, args):
     pools = set([row['PoolName'] for row in read_bed_file(bed)])
 
     ## create a holder to keep the pipeline commands in
-    cmds = []
+    cmds = [] 
 
     # 2) if using nanopolish, set up the reference header and run the nanopolish indexing
     nanopolish_header = get_nanopolish_header(ref)
@@ -179,6 +179,32 @@ def run(parser, args):
               print(colored.red('Must specify FAST5 directory and sequencing summary for nanopolish mode.'))
               raise SystemExit(1)
         cmds.append("nanopolish index -s %s -d %s %s" % (args.sequencing_summary, args.fast5_directory, args.read_file,))
+
+    # 2.5) For viruses highly divergent from the reference do a naive pileup to generate a far less divergent "reference" for the variant calling/polishing steps 
+    if args.divergent:
+        # 2.6) index the ref & align with minimap or bwa
+        if not args.bwa:
+            cmds.append("minimap2 -a -x map-ont -t %s %s %s | samtools view -bS -F 4 - | samtools sort -o %s.sorted.bam -" % (args.threads, ref, read_file, args.sample))
+        else:
+            cmds.append("bwa index %s" % (ref,))
+            cmds.append("bwa mem -t %s -x ont2d %s %s | samtools view -bS -F 4 - | samtools sort -o %s.sorted.bam -" % (args.threads, ref, read_file, args.sample))
+        cmds.append("samtools index %s.sorted.bam" % (args.sample,))
+
+        # 2.7) trim the alignments to the primer start sites and normalise the coverage to save time
+        if args.normalise:
+            normalise_string = '--normalise %d' % (args.normalise)
+        else:
+            normalise_string = ''
+        cmds.append("align_trim %s %s --remove-incorrect-pairs --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.rg.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
+        cmds.append("samtools index %s.primertrimmed.rg.sorted.bam" % (args.sample))
+        
+        # 2.8) Generate a pseudoreference via a naive pileup to capture a large degree of the divergence and allow 
+        # nanopolish / medaka to finish prior to the universe ending
+        cmds.append("bcftools mpileup --max-depth 200000 --skip-indels -Ou -f %s %s.primertrimmed.rg.sorted.bam | bcftools call -mv -Ob -o %s.pseudoreference.vcf.gz" % (ref, args.sample, args.sample))
+        cmds.append("bcftools index %s.pseudoreference.vcf.gz" % (args.sample))
+        cmds.append("bcftools consensus -f %s %s.pseudoreference.vcf.gz > %s.pseudoreference.fasta" % (ref, args.sample, args.sample))
+        # original_ref = ref
+        ref = "%s.pseudoreference.fasta" % (args.sample)
 
     # 3) index the ref & align with minimap or bwa
     if not args.bwa:
@@ -195,31 +221,27 @@ def run(parser, args):
         normalise_string = ''
     cmds.append("align_trim %s %s --start --remove-incorrect-pairs --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.trimmed.rg.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
     cmds.append("align_trim %s %s --remove-incorrect-pairs --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.rg.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
+    cmds.append("align_trim %s %s --remove-incorrect-pairs --no-read-groups --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
     cmds.append("samtools index %s.trimmed.rg.sorted.bam" % (args.sample))
     cmds.append("samtools index %s.primertrimmed.rg.sorted.bam" % (args.sample))
-
-    # 4.5) For viruses highly divergent from the reference do a naive pileup to generate a far less divergent "reference" for the variant calling/polishing steps 
-    if args.divergent:
-        cmds.append("bcftools mpileup --max-depth 200000 --skip-indels -Ou -f %s %s.primertrimmed.rg.sorted.bam | bcftools call -mv -Ob -o %s.naive_reference.vcf.gz" % (ref, args.sample, args.sample))
-        cmds.append("bcftools index %s.naive_reference.vcf.gz" % (args.sample))
-        cmds.append("bcftools consensus -f %s %s.naive_reference.vcf.gz > %s.naive_pileup.consensus.fasta" % (ref, args.sample, args.sample))
-        ref = "%s.naive_pileup.consensus.fasta" % (args.sample)    
+    cmds.append("samtools index %s.primertrimmed.sorted.bam" % (args.sample))
+    
 
     # 6) do variant calling on each read group, either using the medaka or nanopolish workflow
     if args.medaka:
-        for p in pools:
-            if os.path.exists("%s.%s.hdf" % (args.sample, p)):
-                os.remove("%s.%s.hdf" % (args.sample, p))
-            cmds.append("medaka consensus --model %s --threads %s --chunk_len 800 --chunk_ovlp 400 --RG %s %s.trimmed.rg.sorted.bam %s.%s.hdf" % (args.medaka_model, args.threads, p, args.sample, args.sample, p))
-            if args.no_indels:
-                cmds.append("medaka snp %s %s.%s.hdf %s.%s.vcf" % (ref, args.sample, p, args.sample, p))
-            else:
-                cmds.append("medaka variant %s %s.%s.hdf %s.%s.vcf" % (ref, args.sample, p, args.sample, p))
-            
-            ## if not using longshot, annotate VCF with read depth info etc. so we can filter it
-            if args.no_longshot:
-                cmds.append("medaka tools annotate --pad 25 --RG %s %s.%s.vcf %s %s.trimmed.rg.sorted.bam tmp.medaka-annotate.vcf" % (p, args.sample, p, ref, args.sample))
-                cmds.append("mv tmp.medaka-annotate.vcf %s.%s.vcf" % (args.sample, p))
+        # for p in pools:
+        #     if os.path.exists("%s.%s.hdf" % (args.sample, p)):
+        #         os.remove("%s.%s.hdf" % (args.sample, p))
+        cmds.append("medaka consensus --model %s --threads %s --chunk_len 800 --chunk_ovlp 400  %s.primertrimmed.sorted.bam %s.hdf" % (args.medaka_model, args.threads, args.sample, args.sample))
+        if args.no_indels:
+            cmds.append("medaka snp %s %s.hdf %s.vcf" % (ref, args.sample, args.sample))
+        else:    #Output a "merged" vcf for downstream compatibility -> Ignore RG weirdness entirely
+            cmds.append("medaka variant %s %s.hdf %s.merged.vcf" % (ref, args.sample, args.sample))
+        
+        ## if not using longshot, annotate VCF with read depth info etc. so we can filter it
+        if args.no_longshot:                                                               
+            cmds.append("medaka tools annotate --pad 25 %s.vcf %s %s.trimmed.rg.sorted.bam %s.merged.vcf" % (args.sample, ref, args.sample. args.sample))
+            # cmds.append("mv tmp.medaka-annotate.vcf %s.%s.vcf" % (args.sample, p))
 
     else:
         if not args.skip_nanopolish:
@@ -231,11 +253,11 @@ def run(parser, args):
             for p in pools:
                 cmds.append("nanopolish variants --min-flanking-sequence 10 -x %s --progress -t %s --reads %s -o %s.%s.vcf -b %s.trimmed.rg.sorted.bam -g %s -w \"%s\" --ploidy 1 -m 0.15 --read-group %s %s" % (args.max_haplotypes, args.threads, indexed_nanopolish_file, args.sample, p, args.sample, ref, nanopolish_header, p, nanopolish_extra_args))
 
-    # 7) merge the called variants for each read group
-    merge_vcf_cmd = "artic_vcf_merge %s %s 2> %s.primersitereport.txt" % (args.sample, bed, args.sample)
-    for p in pools:
-        merge_vcf_cmd += " %s:%s.%s.vcf" % (p, args.sample, p)
-    cmds.append(merge_vcf_cmd)
+    # # 7) merge the called variants for each read group
+    # merge_vcf_cmd = "artic_vcf_merge %s %s 2> %s.primersitereport.txt" % (args.sample, bed, args.sample)
+    # for p in pools:
+    #     merge_vcf_cmd += " %s:%s.%s.vcf" % (p, args.sample, p)
+    # cmds.append(merge_vcf_cmd)
 
     # 8) check and filter the VCFs
     ## if using strict, run the vcf checker to remove vars present only once in overlap regions (this replaces the original merged vcf from the previous step)
@@ -249,7 +271,7 @@ def run(parser, args):
     if args.medaka and not args.no_longshot:
         cmds.append("bgzip -f %s.merged.vcf" % (args.sample))
         cmds.append("tabix -f -p vcf %s.merged.vcf.gz" % (args.sample))
-        cmds.append("longshot -P 0 -F -A --no_haps --bam %s.primertrimmed.rg.sorted.bam --ref %s --out %s.merged.vcf --potential_variants %s.merged.vcf.gz" % (args.sample, ref, args.sample, args.sample))
+        cmds.append("longshot -P 0 -F --max_cov 200000 --no_haps --bam %s.primertrimmed.sorted.bam --ref %s --out %s.merged.vcf --potential_variants %s.merged.vcf.gz" % (args.sample, ref, args.sample, args.sample))
 
     ## set up some name holder vars for ease
     if args.medaka:
@@ -268,16 +290,25 @@ def run(parser, args):
 
     # 9) get the depth of coverage for each readgroup, create a coverage mask and plots, and add failed variants to the coverage mask (artic_mask must be run before bcftools consensus)
     cmds.append("artic_make_depth_mask --store-rg-depths %s %s.primertrimmed.rg.sorted.bam %s.coverage_mask.txt" % (ref, args.sample, args.sample))
-    cmds.append("artic_mask %s %s.coverage_mask.txt %s.fail.vcf %s.preconsensus.fasta" % (ref, args.sample, args.sample, args.sample))
-
+    cmds.append("artic_mask %s %s.coverage_mask.txt %s.preconsensus.fasta" % (ref, args.sample, args.sample))
+ 
     # 10) generate the consensus sequence
     cmds.append("bcftools consensus -f %s.preconsensus.fasta %s.gz -m %s.coverage_mask.txt -o %s.consensus.fasta" % (args.sample, vcf_file, args.sample, args.sample))
-
+    
+    # reset the ref if a pseudoref was used
+    if args.divergent:
+        # Don't use the pseudoref
+        bed, ref, _ = get_scheme(args.scheme, args.scheme_directory, args.scheme_version)
+    
     # 11) apply the header to the consensus sequence and run alignment against the reference sequence
     fasta_header = "%s/ARTIC/%s" % (args.sample, method)
     cmds.append("artic_fasta_header %s.consensus.fasta \"%s\"" % (args.sample, fasta_header))
     cmds.append("cat %s.consensus.fasta %s > %s.mafft.in.fasta" % (args.sample, ref, args.sample))
     cmds.append("mafft --auto --preservecase --thread -1 %s.mafft.in.fasta > %s.mafft.out.fasta" % (args.sample, args.sample))
+    
+    # 11.5) Generate a non-pseudoref relative VCF (Intermediate VCFs should not be relied upon since they are relative to pseudoref)
+    if args.divergent:
+        cmds.append("snp-sites -v %s.mafft.out.fasta > %s.final.vcf || true" % (args.sample, args.sample))
     
     # 12) get some QC stats
     if args.strict:
