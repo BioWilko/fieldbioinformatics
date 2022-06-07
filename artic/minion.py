@@ -70,7 +70,7 @@ def get_scheme(scheme_name, scheme_directory, scheme_version="1"):
         scheme_name, scheme_version = scheme_name.split('/V')
 
     # create the filenames and check they exist
-    bed = "%s/%s/V%s/%s.scheme.bed" % (scheme_directory, scheme_name, scheme_version, scheme_name)
+    bed = "%s/%s/V%s/%s.primer.bed" % (scheme_directory, scheme_name, scheme_version, scheme_name)
     ref = "%s/%s/V%s/%s.reference.fasta" % (scheme_directory, scheme_name, scheme_version, scheme_name)
     if os.path.exists(bed) and os.path.exists(ref):
         return bed, ref, scheme_version
