@@ -221,27 +221,27 @@ def run(parser, args):
         normalise_string = ''
     cmds.append("align_trim %s %s --start --remove-incorrect-pairs --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.trimmed.rg.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
     cmds.append("align_trim %s %s --remove-incorrect-pairs --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.rg.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
-    cmds.append("align_trim %s %s --remove-incorrect-pairs --no-read-groups --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
+    # cmds.append("align_trim %s %s --remove-incorrect-pairs --no-read-groups --report %s.alignreport.txt < %s.sorted.bam 2> %s.alignreport.er | samtools sort -T %s - -o %s.primertrimmed.sorted.bam" % (normalise_string, bed, args.sample, args.sample, args.sample, args.sample, args.sample))
     cmds.append("samtools index %s.trimmed.rg.sorted.bam" % (args.sample))
     cmds.append("samtools index %s.primertrimmed.rg.sorted.bam" % (args.sample))
-    cmds.append("samtools index %s.primertrimmed.sorted.bam" % (args.sample))
+    # cmds.append("samtools index %s.primertrimmed.sorted.bam" % (args.sample))
     
 
-    # 6) do variant calling on each read group, either using the medaka or nanopolish workflow
+        # 6) do variant calling on each read group, either using the medaka or nanopolish workflow
     if args.medaka:
-        # for p in pools:
-        #     if os.path.exists("%s.%s.hdf" % (args.sample, p)):
-        #         os.remove("%s.%s.hdf" % (args.sample, p))
-        cmds.append("medaka consensus --model %s --threads %s --chunk_len 800 --chunk_ovlp 400  %s.primertrimmed.sorted.bam %s.hdf" % (args.medaka_model, args.threads, args.sample, args.sample))
-        if args.no_indels:
-            cmds.append("medaka snp %s %s.hdf %s.vcf" % (ref, args.sample, args.sample))
-        else:    #Output a "merged" vcf for downstream compatibility -> Ignore RG weirdness entirely
-            cmds.append("medaka variant %s %s.hdf %s.merged.vcf" % (ref, args.sample, args.sample))
-        
-        ## if not using longshot, annotate VCF with read depth info etc. so we can filter it
-        if args.no_longshot:                                                               
-            cmds.append("medaka tools annotate --pad 25 %s.vcf %s %s.trimmed.rg.sorted.bam %s.merged.vcf" % (args.sample, ref, args.sample. args.sample))
-            # cmds.append("mv tmp.medaka-annotate.vcf %s.%s.vcf" % (args.sample, p))
+        for p in pools:
+            if os.path.exists("%s.%s.hdf" % (args.sample, p)):
+                os.remove("%s.%s.hdf" % (args.sample, p))
+            cmds.append("medaka consensus --model %s --threads %s --chunk_len 800 --chunk_ovlp 400 --RG %s %s.trimmed.rg.sorted.bam %s.%s.hdf" % (args.medaka_model, args.threads, p, args.sample, args.sample, p))
+            if args.no_indels:
+                cmds.append("medaka snp %s %s.%s.hdf %s.%s.vcf" % (ref, args.sample, p, args.sample, p))
+            else:
+                cmds.append("medaka variant %s %s.%s.hdf %s.%s.vcf" % (ref, args.sample, p, args.sample, p))
+            
+            ## if not using longshot, annotate VCF with read depth info etc. so we can filter it
+            if args.no_longshot:
+                cmds.append("medaka tools annotate --pad 25 --RG %s %s.%s.vcf %s %s.trimmed.rg.sorted.bam tmp.medaka-annotate.vcf" % (p, args.sample, p, ref, args.sample))
+                cmds.append("mv tmp.medaka-annotate.vcf %s.%s.vcf" % (args.sample, p))
 
     else:
         if not args.skip_nanopolish:
@@ -253,11 +253,11 @@ def run(parser, args):
             for p in pools:
                 cmds.append("nanopolish variants --min-flanking-sequence 10 -x %s --progress -t %s --reads %s -o %s.%s.vcf -b %s.trimmed.rg.sorted.bam -g %s -w \"%s\" --ploidy 1 -m 0.15 --read-group %s %s" % (args.max_haplotypes, args.threads, indexed_nanopolish_file, args.sample, p, args.sample, ref, nanopolish_header, p, nanopolish_extra_args))
 
-    # # 7) merge the called variants for each read group
-    # merge_vcf_cmd = "artic_vcf_merge %s %s 2> %s.primersitereport.txt" % (args.sample, bed, args.sample)
-    # for p in pools:
-    #     merge_vcf_cmd += " %s:%s.%s.vcf" % (p, args.sample, p)
-    # cmds.append(merge_vcf_cmd)
+    # 7) merge the called variants for each read group
+    merge_vcf_cmd = "artic_vcf_merge %s %s 2> %s.primersitereport.txt" % (args.sample, bed, args.sample)
+    for p in pools:
+        merge_vcf_cmd += " %s:%s.%s.vcf" % (p, args.sample, p)
+    cmds.append(merge_vcf_cmd)
 
     # 8) check and filter the VCFs
     ## if using strict, run the vcf checker to remove vars present only once in overlap regions (this replaces the original merged vcf from the previous step)
@@ -271,7 +271,7 @@ def run(parser, args):
     if args.medaka and not args.no_longshot:
         cmds.append("bgzip -f %s.merged.vcf" % (args.sample))
         cmds.append("tabix -f -p vcf %s.merged.vcf.gz" % (args.sample))
-        cmds.append("longshot -P 0 -F --max_cov 200000 --no_haps --bam %s.primertrimmed.sorted.bam --ref %s --out %s.merged.vcf --potential_variants %s.merged.vcf.gz" % (args.sample, ref, args.sample, args.sample))
+        cmds.append("longshot -P 0 -F --max_cov 200000 --no_haps --bam %s.primertrimmed.rg.sorted.bam --ref %s --out %s.merged.vcf --potential_variants %s.merged.vcf.gz" % (args.sample, ref, args.sample, args.sample))
 
     ## set up some name holder vars for ease
     if args.medaka:
@@ -303,7 +303,7 @@ def run(parser, args):
     # 11) apply the header to the consensus sequence and run alignment against the reference sequence
     fasta_header = "%s/ARTIC/%s" % (args.sample, method)
     cmds.append("artic_fasta_header %s.consensus.fasta \"%s\"" % (args.sample, fasta_header))
-    cmds.append("cat %s.consensus.fasta %s > %s.mafft.in.fasta" % (args.sample, ref, args.sample))
+    cmds.append("cat %s %s.consensus.fasta > %s.mafft.in.fasta" % (ref, args.sample, args.sample))
     cmds.append("mafft --auto --preservecase --thread -1 %s.mafft.in.fasta > %s.mafft.out.fasta" % (args.sample, args.sample))
     
     # 11.5) Generate a non-pseudoref relative VCF (Intermediate VCFs should not be relied upon since they are relative to pseudoref)
