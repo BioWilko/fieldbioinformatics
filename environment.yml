@@ -1,4 +1,4 @@
-name: artic
+name: artic-dev
 channels:
   - conda-forge
   - bioconda
