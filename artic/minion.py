@@ -139,7 +139,7 @@ def get_scheme(scheme_name, scheme_directory, scheme_version="1"):
     raise SystemExit(1)
 
 def run(parser, args):
-
+    
     # check for medaka-model
     if args.medaka and (args.medaka_model is None):
         print(colored.red('Must specify --medaka-model if using the --medaka workflow.'))
@@ -150,12 +150,12 @@ def run(parser, args):
     bed, ref, _ = get_scheme(args.scheme, args.scheme_directory, args.scheme_version)
 
     ## if in strict mode, validate the primer scheme
-    if args.strict:
-        checkScheme = "artic-tools validate_scheme %s" % (bed)
-        print(colored.green("Running: "), checkScheme, file=sys.stderr)
-        if (os.system(checkScheme) != 0):
-            print(colored.red("primer scheme failed strict checking"), file=sys.stderr)
-            raise SystemExit(1)
+    # if args.strict:
+    #     checkScheme = "artic-tools validate_scheme %s" % (bed)
+    #     print(colored.green("Running: "), checkScheme, file=sys.stderr)
+    #     if (os.system(checkScheme) != 0):
+    #         print(colored.red("primer scheme failed strict checking"), file=sys.stderr)
+    #         raise SystemExit(1)
 
     ## set up the read file
     if args.read_file:
