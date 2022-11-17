@@ -32,11 +32,10 @@ def go(args):
             cons[region['chrom']][n] = 'N'
 
     sett = set()
-    if args.maskvcf:
-        vcf_reader = vcf.Reader(open(args.maskvcf, 'r'))
-        for record in vcf_reader:
-            for n in range(0, len(record.REF)):
-                cons[record.CHROM][record.POS-1+n] = 'N'
+    vcf_reader = vcf.Reader(open(args.maskvcf, 'r'))
+    for record in vcf_reader:
+        for n in range(0, len(record.REF)):
+            cons[record.CHROM][record.POS-1+n] = 'N'
 
     fh = open(args.output, 'w')
     for k in seqs.keys():
@@ -49,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('reference')
     parser.add_argument('maskfile')
-    parser.add_argument('--maskvcf')
+    parser.add_argument('maskvcf')
     parser.add_argument('output')
     args = parser.parse_args()
     go(args)
